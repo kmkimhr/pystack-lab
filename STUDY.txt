@@ -24,6 +24,53 @@ WSGI vs ASGI:
     :app       그 파일 안의 app 변수 (FastAPI 인스턴스)
     --reload   코드 변경 시 자동 재시작 (개발용)
 
+-- 라우터 분리 구조 --
+엔드포인트를 기능별 파일로 나누고 한 곳에서 모아 등록하는 패턴.
+
+구조:
+  main.py
+    └─ api_router (prefix: /api/v1)
+         └─ health_router (tag: health)
+              └─ GET /health
+
+파일별 역할:
+  main.py              FastAPI 앱 생성, 최상위 라우터 등록만
+  api/v1/router.py     v1에 속한 모든 라우터를 한 곳에서 모아 등록
+  api/v1/health.py     health 관련 엔드포인트만
+
+코드:
+  # api/v1/health.py
+  from fastapi import APIRouter
+  router = APIRouter()
+
+  @router.get("/health")
+  def health_check():
+      return {"status": "ok"}
+
+  # api/v1/router.py
+  from fastapi import APIRouter
+  from app.api.v1.health import router as health_router
+
+  api_router = APIRouter()
+  api_router.include_router(health_router, tags=["health"])
+
+  # main.py
+  from fastapi import FastAPI
+  from app.api.v1.router import api_router
+
+  app = FastAPI()
+  app.include_router(api_router, prefix="/api/v1")
+
+확장 시:
+  api_router.include_router(health_router, tags=["health"])
+  api_router.include_router(user_router, tags=["users"])   ← 추가
+  api_router.include_router(auth_router, tags=["auth"])    ← 추가
+  main.py는 건드릴 필요 없음
+
+tags: /docs에서 엔드포인트를 그룹으로 묶어 보여주는 용도. 기능적 차이 없음.
+
+---
+
 Q. __pycache__는 왜 생기나?
   Python이 .py 파일을 실행할 때 바이트코드로 컴파일한 결과를 캐싱해두는 폴더.
   다음 실행 시 소스가 바뀌지 않았으면 컴파일을 건너뛰고 캐시를 사용 → 실행 속도 향상.
