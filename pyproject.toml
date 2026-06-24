@@ -3,7 +3,9 @@ name = "pystack-lab"
 version = "0.1.0"
 description = "FastAPI backend stack study project"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic-settings>=2.14.2",
+]
 
 [dependency-groups]
 dev = [
