@@ -66,6 +66,35 @@ fake_db:
 
 ---
 
+-- 의존성 주입 (Depends) --
+공통 로직을 함수로 분리하고 FastAPI가 자동으로 주입하는 패턴.
+
+문제: Depends 없이는 모든 엔드포인트마다 공통 로직을 반복해야 함
+  @router.get("/items")
+  def get_items():
+      token = request.headers.get("Authorization")  # 매번 반복
+      user = verify_token(token)                     # 매번 반복
+      db = get_db_connection()                       # 매번 반복
+
+해결: Depends로 분리
+  @router.get("/items")
+  def get_items(user=Depends(get_current_user), db=Depends(get_db)):
+      ...  # 공통 로직은 FastAPI가 알아서 실행 후 주입
+
+동작 방식:
+  엔드포인트 호출 시 FastAPI가 Depends(함수)를 보고
+  해당 함수를 먼저 실행한 뒤 결과를 파라미터에 자동 주입.
+  개발자가 직접 함수를 호출할 필요 없음.
+
+주요 사용처:
+  DB 세션       db: Session = Depends(get_db)
+  현재 유저     user: User = Depends(get_current_user)
+  권한 체크     _ = Depends(require_admin)
+
+핵심: 엔드포인트는 "무엇을 할지"만 담당, 공통 준비 작업은 Depends로 분리.
+
+---
+
 -- 라우터 분리 구조 --
 엔드포인트를 기능별 파일로 나누고 한 곳에서 모아 등록하는 패턴.
 
