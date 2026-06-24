@@ -1,6 +1,12 @@
 pystack-lab 학습 노트
 ======================
 
+[다음 시작 위치]
+Unit 2 — 데이터베이스 (PostgreSQL + SQLAlchemy async + Alembic) 부터 시작
+  설치: uv add sqlalchemy asyncpg alembic
+
+======================
+
 [Unit 1 - FastAPI 기초]
 
 -- FastAPI / uvicorn --
@@ -63,6 +69,40 @@ fake_db:
 422 Validation Error:
   요청 데이터가 스키마와 맞지 않을 때 FastAPI가 자동으로 반환하는 에러.
   별도 처리 없이 Pydantic이 자동으로 검증.
+
+---
+
+-- 전역 예외 핸들러 & 미들웨어 --
+
+전역 예외 핸들러:
+  에러 발생 시 모든 엔드포인트에서 일관된 형태로 응답을 내려주는 장치.
+  @app.exception_handler(HTTPException)
+  async def http_exception_handler(request: Request, exc: HTTPException):
+      return JSONResponse(
+          status_code=exc.status_code,
+          content={"error": exc.detail, "code": exc.status_code},
+      )
+  HTTPException을 raise하면 이 핸들러가 가로채서 통일된 형태로 응답.
+
+미들웨어:
+  모든 요청/응답을 가로채서 공통 처리를 하는 레이어.
+  엔드포인트 실행 전/후에 끼어듦.
+  @app.middleware("http")
+  async def add_process_time(request: Request, call_next):
+      start = time.time()
+      response = await call_next(request)   # 엔드포인트 실행
+      response.headers["X-Process-Time"] = str(time.time() - start)
+      return response
+  주요 용도: 요청 처리 시간 측정, CORS 설정, 로깅
+
+HTTPException:
+  FastAPI에서 HTTP 에러를 발생시키는 방법.
+  raise HTTPException(status_code=404, detail="아이템을 찾을 수 없습니다")
+
+Q. X-Process-Time은 표준 헤더인가?
+  커스텀 헤더. X- 접두사가 붙은 헤더는 관례적으로 커스텀 헤더를 의미.
+  표준 헤더: Content-Type, Authorization, Cache-Control 등
+  커스텀 헤더: X- 로 시작하며 서버가 임의로 추가한 헤더
 
 ---
 

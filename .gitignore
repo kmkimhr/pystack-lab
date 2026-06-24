@@ -12,3 +12,6 @@ __pycache__/
 
 # 캐시
 .ruff_cache/
+
+# 학습 노트
+STUDY.txt
