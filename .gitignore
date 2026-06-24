@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+
+# 가상환경
+.venv/
+
+# 환경변수
+.env
+
+# 캐시
+.ruff_cache/

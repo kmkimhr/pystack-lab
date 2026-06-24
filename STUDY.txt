@@ -1,6 +1,46 @@
 pystack-lab 학습 노트
 ======================
 
+[Unit 1 - FastAPI 기초]
+
+-- FastAPI / uvicorn --
+FastAPI: Python 비동기 웹 프레임워크. async/await 기반.
+uvicorn: ASGI 서버. FastAPI 공식 문서 기준 서버이며 실무 표준.
+          (ASGI 서버 종류: uvicorn, hypercorn, daphne 등이 있으나 실무에서는 uvicorn이 사실상 표준)
+
+WSGI vs ASGI:
+  WSGI   요청 하나 처리 중 다른 요청 대기 (동기)
+  ASGI   요청 대기 중 다른 요청 처리 가능 (비동기)
+  FastAPI는 비동기 프레임워크이므로 ASGI 서버(uvicorn)가 필요
+
+비유: FastAPI = 주방, uvicorn = 홀 직원 (요청을 받아 주방에 전달)
+
+설치:
+  uv add fastapi uvicorn
+
+실행:
+  uvicorn app.main:app --reload
+    app.main   app/main.py 파일
+    :app       그 파일 안의 app 변수 (FastAPI 인스턴스)
+    --reload   코드 변경 시 자동 재시작 (개발용)
+
+Q. __pycache__는 왜 생기나?
+  Python이 .py 파일을 실행할 때 바이트코드로 컴파일한 결과를 캐싱해두는 폴더.
+  다음 실행 시 소스가 바뀌지 않았으면 컴파일을 건너뛰고 캐시를 사용 → 실행 속도 향상.
+  개발자가 직접 건드릴 일 없음. git에 올리지 않도록 .gitignore에 추가.
+    __pycache__/
+    *.pyc
+
+Q. docker compose가 있는데 왜 uvicorn을 따로 실행하나?
+  개발 단계에서는 역할을 나눈다.
+    docker compose up          PostgreSQL, Redis 등 인프라
+    uv run uvicorn ... --reload FastAPI 앱 (로컬 직접 실행)
+  앱을 Docker로 띄우면 코드 변경 시마다 이미지를 새로 빌드해야 해서 불편.
+  --reload로 로컬에서 실행하면 저장 즉시 반영.
+  나중에 배포 단계(Unit 8)에서 Dockerfile을 만들고 docker-compose.yml에 앱도 추가.
+
+---
+
 [Unit 0 - 개발 환경 세팅]
 
 -- uv --
