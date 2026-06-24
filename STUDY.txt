@@ -24,6 +24,48 @@ WSGI vs ASGI:
     :app       그 파일 안의 app 변수 (FastAPI 인스턴스)
     --reload   코드 변경 시 자동 재시작 (개발용)
 
+-- Request / Response 스키마 (Pydantic 모델) --
+API가 받고 반환하는 데이터 구조를 Pydantic BaseModel로 정의.
+
+파일 위치: app/schemas/item.py
+
+코드:
+  class ItemCreate(BaseModel):    # 요청 body 스키마
+      name: str
+      price: float
+      is_available: bool = True   # 기본값 있음 → 요청에 없으면 자동으로 True
+
+  class ItemResponse(BaseModel):  # 응답 스키마
+      id: int
+      name: str
+      price: float
+      is_available: bool
+
+Q. 기본값 없는 필드는 자동으로 채워지나?
+  반대. 기본값 있는 필드가 자동으로 채워진다.
+    기본값 없음 (name, price)     → 요청에 반드시 포함해야 함. 없으면 422 Validation Error
+    기본값 있음 (is_available)    → 요청에 없으면 기본값으로 자동 채움
+
+response_model:
+  @router.post("/items", response_model=ItemResponse)
+  엔드포인트가 반환할 스키마를 명시. 두 가지 역할:
+    1. 반환 데이터를 스키마에 맞게 필터링 (불필요한 필드 자동 제거)
+    2. /docs에 응답 형태 자동 문서화
+
+model_dump():
+  Pydantic 모델 인스턴스를 dict로 변환.
+  **item.model_dump() → name=..., price=..., is_available=... 형태로 풀어서 전달
+
+fake_db:
+  실제 DB 없이 메모리(리스트)에 임시 저장하는 방식.
+  서버 재시작 시 데이터 사라짐. Unit 2에서 실제 DB로 교체.
+
+422 Validation Error:
+  요청 데이터가 스키마와 맞지 않을 때 FastAPI가 자동으로 반환하는 에러.
+  별도 처리 없이 Pydantic이 자동으로 검증.
+
+---
+
 -- 라우터 분리 구조 --
 엔드포인트를 기능별 파일로 나누고 한 곳에서 모아 등록하는 패턴.
 
