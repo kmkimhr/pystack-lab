@@ -58,3 +58,109 @@ pyproject.toml 설정:
   uv run ruff check . --fix   자동 수정
   uv run ruff format .        코드 포맷
   uv run ruff format --check . 포맷 변경사항 확인 (실제 수정 없이)
+
+-- .env --
+민감한 값(DB 비밀번호, API 키 등)을 코드에서 분리하는 파일.
+git에 올리지 않고 환경마다 따로 관리한다. (.gitignore에 추가)
+
+구조:
+  # App
+  APP_ENV=development
+  APP_DEBUG=true
+  SECRET_KEY=super-secret-key-change-in-production
+
+  # Database (PostgreSQL)
+  DB_HOST=localhost
+  DB_PORT=5432
+  DB_NAME=pystack_db
+  DB_USER=pystack_user
+  DB_PASSWORD=pystack_password
+
+  # Redis
+  REDIS_HOST=localhost
+  REDIS_PORT=6379
+
+  # MinIO (S3-compatible)
+  MINIO_ENDPOINT=localhost:9000
+  MINIO_ACCESS_KEY=minioadmin
+  MINIO_SECRET_KEY=minioadmin
+  MINIO_BUCKET=pystack-bucket
+
+-- pydantic-settings --
+.env 파일과 환경변수를 Python 클래스로 읽어오는 라이브러리.
+BaseSettings를 상속받아 설정 클래스를 만든다.
+
+설치:
+  uv add pydantic-settings
+
+파일 위치: app/core/config.py
+
+코드:
+  from pydantic_settings import BaseSettings, SettingsConfigDict
+
+  class Settings(BaseSettings):
+      model_config = SettingsConfigDict(
+          env_file=".env",
+          env_file_encoding="utf-8",
+      )
+
+      app_env: str = "development"   # 기본값 있음 → .env에 없어도 OK
+      app_debug: bool = False
+      secret_key: str                # 기본값 없음 → .env에 반드시 있어야 함
+
+      db_host: str = "localhost"
+      db_port: int = 5432
+      db_name: str
+      db_user: str
+      db_password: str
+
+      redis_host: str = "localhost"
+      redis_port: int = 6379
+
+      minio_endpoint: str
+      minio_access_key: str
+      minio_secret_key: str
+      minio_bucket: str
+
+  settings = Settings()  # type: ignore[call-arg]
+
+핵심 개념:
+  - model_config      .env 파일 경로와 인코딩 설정
+  - 기본값 없는 필드   앱 시작 시 .env에 없으면 즉시 에러 → 설정 누락을 조기에 잡음
+  - 타입 자동 변환    "5432" → 5432, "true" → True (문자열을 각 타입으로 변환)
+  - 대소문자 무관      .env의 DB_HOST가 db_host 필드에 자동 매핑
+  - 싱글턴 패턴       모듈 하단에 settings = Settings() 하나만 생성,
+                      다른 파일에서 from app.core.config import settings 로 사용
+
+-- docker-compose.yml --
+여러 컨테이너를 한 번에 정의하고 실행하는 파일.
+서비스를 추가할 때마다 여기에 블록을 추가해간다.
+
+구조:
+  services:
+    db:
+      image: postgres:16
+      environment:
+        POSTGRES_DB: ${DB_NAME}
+        POSTGRES_USER: ${DB_USER}
+        POSTGRES_PASSWORD: ${DB_PASSWORD}
+      ports:
+        - "${DB_PORT}:5432"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+
+    redis:
+      image: redis:7
+      ports:
+        - "${REDIS_PORT}:6379"
+
+  volumes:
+    postgres_data:
+
+핵심 개념:
+  - services          실행할 컨테이너 목록. 나중에 minio, celery 등 추가
+  - image             Docker Hub에서 가져올 이미지. 버전 태그 고정 권장
+  - environment       컨테이너 안에 주입할 환경변수. ${변수명}으로 .env 값 참조
+  - ports             호스트포트:컨테이너포트. 호스트 쪽만 바꾸면 포트 충돌 해결
+  - volumes           컨테이너가 꺼져도 데이터 유지. DB처럼 영속성이 필요한 서비스에 사용
+  - Redis 볼륨 없음    캐시 용도라 재시작 시 초기화되어도 무방
