@@ -164,3 +164,31 @@ BaseSettings를 상속받아 설정 클래스를 만든다.
   - ports             호스트포트:컨테이너포트. 호스트 쪽만 바꾸면 포트 충돌 해결
   - volumes           컨테이너가 꺼져도 데이터 유지. DB처럼 영속성이 필요한 서비스에 사용
   - Redis 볼륨 없음    캐시 용도라 재시작 시 초기화되어도 무방
+
+명령어:
+  docker compose up         포그라운드 실행 (로그 실시간 출력)
+  docker compose up -d      백그라운드(데몬) 실행
+  docker compose ps         실행 중인 컨테이너 상태 확인
+  docker compose down       컨테이너 종료
+  docker compose down -v    컨테이너 종료 + 볼륨까지 삭제 (DB 초기화)
+
+컨테이너 접속:
+  docker compose exec db psql -U pystack_user -d pystack_db
+    exec          실행 중인 컨테이너 안에서 명령어 실행
+    db            docker-compose.yml에서 정의한 서비스 이름
+    psql          PostgreSQL 클라이언트 CLI
+    -U            접속할 유저
+    -d            접속할 DB 이름
+
+psql 명령어:
+  \conninfo     현재 접속 정보 출력 (호스트, 유저, DB명)
+  \q            psql 종료
+
+Q. DB 유저와 DB는 언제 만들어지나?
+  docker compose up 실행 시 postgres 공식 이미지가 처음 시작될 때
+  environment에 넣어준 값을 읽어 자동으로 생성한다.
+    POSTGRES_DB       → 이 이름으로 DB 생성
+    POSTGRES_USER     → 이 이름으로 유저 생성
+    POSTGRES_PASSWORD → 해당 유저 비밀번호 설정
+  이미지 안에 초기화 로직이 내장되어 있어 별도 SQL 실행 불필요.
+  volumes가 없으면 컨테이너를 내렸다 올릴 때마다 DB가 초기화된다.
