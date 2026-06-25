@@ -5,6 +5,36 @@ pystack-lab 학습 노트
 
 [Unit 4 - 인증 (JWT)]
 
+-- OAuth2 vs JWT --
+
+OAuth2: 인증 흐름(프로토콜). "토큰을 어떻게 발급받고 전달할 것인가"를 정의.
+        대표 사례: 소셜 로그인 (Google, Kakao 등)
+          → 외부 서비스(구글)가 토큰을 발급 → 우리 서버가 그 토큰으로 API 호출
+        흐름(flow) 자체가 핵심.
+
+JWT:    토큰 형식(포맷). "토큰 안에 무엇을 어떻게 담을 것인가"를 정의.
+        OAuth2 흐름에서 발급하는 토큰을 JWT 형식으로 만들 수 있음.
+        JWT는 OAuth2 없이도 독립적으로 사용 가능.
+
+관계:
+  OAuth2 = 흐름 (어떻게 인증할 것인가)
+  JWT    = 형식 (토큰에 무엇을 담을 것인가)
+  → 조합해서 쓸 수 있지만, 같은 개념이 아님.
+
+우리 코드의 방식:
+  OAuth2 아님. 자체 JWT 인증.
+  클라이언트 → POST /login (email+password) → 서버가 JWT 직접 발급
+  소셜 로그인 없이 우리 서버가 토큰 생성/검증 모두 담당.
+
+OAuth2PasswordBearer vs HTTPBearer (FastAPI):
+  OAuth2PasswordBearer: 이름에 OAuth2가 붙지만 실제로는 Bearer 토큰 추출 유틸리티.
+                        Swagger에 OAuth2 로그인 폼(username/password)을 표시함.
+                        우리 로그인이 JSON body를 받아서 Swagger 폼과 불일치 발생.
+  HTTPBearer:           단순히 Authorization: Bearer <token> 헤더에서 토큰만 추출.
+                        Swagger에 토큰 직접 입력 칸을 표시 → 우리 방식에 적합.
+
+---
+
 -- JWT란? --
 
 JWT (JSON Web Token): 서버가 "이 사람은 로그인한 사용자다"를 증명하는 토큰.
