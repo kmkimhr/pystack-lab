@@ -1,11 +1,39 @@
 pystack-lab 학습 노트
 ======================
 
-[다음 시작 위치]
-Unit 2 — 데이터베이스 (PostgreSQL + SQLAlchemy async + Alembic) 부터 시작
-  설치: uv add sqlalchemy asyncpg alembic
-
 ======================
+
+[Unit 2 - 데이터베이스 (PostgreSQL + SQLAlchemy async + Alembic)]
+
+설치:
+  uv add sqlalchemy asyncpg alembic
+
+-- app/core/database.py --
+DB 연결 설정 파일. 실무 표준 패턴 (SQLAlchemy 공식 문서 기준).
+
+DATABASE_URL:
+  SQLAlchemy가 DB 접속 시 쓰는 연결 문자열.
+  postgresql+asyncpg://  → PostgreSQL을 asyncpg 드라이버로 비동기 접속
+
+create_async_engine:
+  실제 DB 연결을 관리하는 엔진. 커넥션 풀을 내부적으로 관리.
+  echo=True   실행되는 SQL을 터미널에 출력 (개발용, 운영에서는 False)
+
+async_sessionmaker:
+  DB 세션을 만드는 공장. 세션은 DB와의 대화 단위 (쿼리 실행, 트랜잭션 관리).
+  expire_on_commit=False  커밋 후에도 객체 데이터를 메모리에 유지.
+                          없으면 커밋 후 객체 접근 시 DB를 다시 조회.
+
+Base (DeclarativeBase):
+  모든 DB 모델이 상속받을 베이스 클래스.
+  class User(Base), class Item(Base) 형태로 사용.
+
+get_db:
+  Depends(get_db)로 엔드포인트에 세션을 주입할 때 쓰는 함수.
+  yield를 쓰는 이유: 엔드포인트 실행 후 with 블록이 자동으로 세션을 닫아줌.
+  개발자가 직접 session.close() 호출 불필요.
+
+---
 
 [Unit 1 - FastAPI 기초]
 
