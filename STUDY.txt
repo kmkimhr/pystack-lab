@@ -296,6 +296,98 @@ Q. decode에서 except를 Exception으로 넓게 잡는 게 맞나?
 
 ---
 
+[Unit 5 - Celery (비동기 작업 큐)]
+
+-- 개념 --
+
+Celery: Python 비동기 작업 큐. 시간이 오래 걸리는 작업을 백그라운드에서 처리.
+
+구성 요소:
+  FastAPI       → Task를 큐에 넣음 (발행자)
+  Redis         → 작업 메시지를 담는 큐 (브로커)
+  Celery Worker → 큐에서 작업을 꺼내 실행 (소비자)
+  Flower        → Celery 작업 상태 웹 모니터링 (localhost:5555)
+
+사용 이유:
+  이메일 발송, 파일 처리 등 무거운 작업을 API 응답과 분리.
+  클라이언트는 task_id만 받고 즉시 응답 → 백그라운드에서 작업 실행.
+
+Redis DB 번호:
+  broker:  redis://host:port/0  → 작업 메시지 저장
+  backend: redis://host:port/1  → 작업 결과 저장
+  /0, /1은 Redis의 논리적 DB 구분. 충돌 방지.
+
+---
+
+-- app/worker.py --
+
+  celery_app = Celery(
+      "worker",
+      broker=f"redis://{settings.redis_host}:{settings.redis_port}/0",
+      backend=f"redis://{settings.redis_host}:{settings.redis_port}/1",
+      include=["app.tasks"],
+  )
+
+broker:  Celery가 작업을 넣고 꺼내는 큐. Redis 사용.
+backend: 작업 결과를 저장하는 곳. task_id로 결과 조회 시 여기서 읽음.
+include: Task가 정의된 모듈 경로. worker 시작 시 자동으로 import.
+
+---
+
+-- app/tasks.py --
+
+  @celery_app.task(bind=True, max_retries=3, default_retry_delay=5)
+  def process_item(self, item_id: int) -> dict:
+      try:
+          time.sleep(20)
+          return {"item_id": item_id, "status": "processed"}
+      except Exception as exc:
+          raise self.retry(exc=exc)
+
+@celery_app.task: 일반 함수를 Celery Task로 등록.
+bind=True:         self로 task 인스턴스에 접근 가능. retry 호출에 필요.
+max_retries=3:     최대 3번 재시도. 초과 시 MaxRetriesExceededError.
+default_retry_delay=5: 재시도 간격(초).
+self.retry(exc=exc): 실패 시 재시도 예약 후 현재 실행 종료.
+
+Task 상태:
+  PENDING  → 대기 중 (또는 존재하지 않는 task_id)
+  STARTED  → 실행 중
+  SUCCESS  → 완료
+  FAILURE  → 실패 (재시도 초과 포함)
+  RETRY    → 재시도 대기 중
+
+---
+
+-- app/api/v1/tasks.py --
+
+  @router.post("/tasks/process-item/{item_id}")
+  async def run_process_item(item_id: int):
+      task = process_item.delay(item_id)  # 큐에 작업 넣기
+      return {"task_id": task.id}         # 즉시 응답
+
+  @router.get("/tasks/{task_id}")
+  async def get_task_status(task_id: str):
+      result = AsyncResult(task_id)
+      return {
+          "status": result.status,
+          "result": result.result if result.ready() else None,
+      }
+
+delay(): Task를 브로커(Redis)에 넣고 즉시 반환. 실행은 worker가 담당.
+AsyncResult(task_id): task_id로 작업 상태/결과 조회.
+result.ready(): SUCCESS 또는 FAILURE 상태이면 True.
+
+apply_async() vs delay():
+  delay(arg1, arg2)                    → 간단한 호출
+  apply_async(args=[arg1], countdown=10)  → 옵션 지정 가능 (지연 실행, 만료 등)
+
+Celery worker 코드 변경 시 재시작 필요:
+  FastAPI는 --reload로 자동 반영되지만
+  Celery worker는 --reload 없음 → Ctrl+C 후 재시작 필요.
+
+---
+
 [Unit 4 - Redis]
 
 -- Redis 개념 --
