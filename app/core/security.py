@@ -1,21 +1,19 @@
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from jose import jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # 회원가입 시 평문 비밀번호를 bcrypt 해시로 변환 → DB에 저장
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 # 로그인 시 입력된 평문과 DB의 해시값 비교 → True/False 반환
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 # 로그인 성공 후 subject(email 등)를 담은 JWT 액세스 토큰 발급
