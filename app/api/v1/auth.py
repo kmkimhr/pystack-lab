@@ -1,8 +1,7 @@
-from datetime import timezone
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import (
     create_access_token,
@@ -32,8 +31,9 @@ async def login(user: UserCreate, db: AsyncSession = Depends(get_db)):
         raise HTTPException(
             status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다"
         )
-    refresh_token, expires_at = create_refresh_token()
-    await rt_repo.save_refresh_token(db, refresh_token, db_user.id, expires_at)
+    refresh_token, _ = create_refresh_token()
+    expire_seconds = settings.jwt_refresh_expire_days * 86400
+    await rt_repo.save_refresh_token(refresh_token, db_user.id, expire_seconds)
     return Token(
         access_token=create_access_token(db_user.email),
         refresh_token=refresh_token,
@@ -42,19 +42,18 @@ async def login(user: UserCreate, db: AsyncSession = Depends(get_db)):
 
 @router.post("/refresh", response_model=Token)
 async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
-    from datetime import datetime
-
-    rt = await rt_repo.get_refresh_token(db, body.refresh_token)
-    if not rt or rt.is_revoked:
+    user_id = await rt_repo.get_user_id_by_refresh_token(body.refresh_token)
+    if not user_id:
         raise HTTPException(status_code=401, detail="유효하지 않은 리프레시 토큰입니다")
-    if rt.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
-        raise HTTPException(status_code=401, detail="만료된 리프레시 토큰입니다")
 
-    user = await user_repo.get_user_by_id(db, rt.user_id)
+    user = await user_repo.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="유효하지 않은 리프레시 토큰입니다")
 
-    await rt_repo.revoke_refresh_token(db, body.refresh_token)
-    new_refresh_token, expires_at = create_refresh_token()
-    await rt_repo.save_refresh_token(db, new_refresh_token, rt.user_id, expires_at)
+    await rt_repo.revoke_refresh_token(body.refresh_token)
+    new_refresh_token, _ = create_refresh_token()
+    expire_seconds = settings.jwt_refresh_expire_days * 86400
+    await rt_repo.save_refresh_token(new_refresh_token, user_id, expire_seconds)
     return Token(
         access_token=create_access_token(user.email),
         refresh_token=new_refresh_token,
@@ -62,6 +61,5 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/logout", status_code=204)
-async def logout(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
-    await rt_repo.revoke_refresh_token(db, body.refresh_token)
-
+async def logout(body: RefreshRequest):
+    await rt_repo.revoke_refresh_token(body.refresh_token)

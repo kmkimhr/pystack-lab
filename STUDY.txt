@@ -296,6 +296,112 @@ Q. decode에서 except를 Exception으로 넓게 잡는 게 맞나?
 
 ---
 
+[Unit 4 - Redis]
+
+-- Redis 개념 --
+
+정의:
+  Remote Dictionary Server. 데이터를 메모리(RAM)에 저장하는 key-value 저장소.
+  디스크가 아닌 RAM에 저장하므로 DB보다 10~100배 빠름.
+
+주요 목적 4가지:
+  1. 캐시 (가장 많이 쓰는 용도)
+     자주 조회되고 잘 안 바뀌는 데이터를 Redis에 저장.
+     클라이언트 요청 → Redis 캐시 확인 → 있으면 바로 반환 (DB 조회 없음)
+                                         → 없으면 DB 조회 → Redis 저장 → 반환
+
+  2. 세션 / 토큰 저장
+     refresh_token, 로그인 세션 등 임시 데이터 저장.
+     TTL 설정으로 만료 자동 처리.
+
+  3. 메시지 브로커
+     Celery(Unit 5)의 작업 큐로 사용.
+     "이 작업 나중에 처리해줘" 메시지를 Redis에 넣으면 worker가 꺼내서 처리.
+
+  4. 실시간 기능
+     채팅, 알림, 실시간 랭킹 등. Pub/Sub 기능으로 메시지 발행/구독.
+
+데이터 구조:
+  String     → 토큰 저장, 카운터         (우리가 사용 중)
+  List       → 최근 본 상품 목록
+  Set        → 좋아요 누른 유저 목록
+  Hash       → 유저 세션 정보
+  Sorted Set → 실시간 랭킹
+
+장점:
+  압도적인 속도: 메모리 기반. DB보다 10~100배 빠름.
+  TTL:          키마다 만료 시간 설정. 만료 처리 코드 불필요.
+  단순한 API:   GET, SET, DEL 등 명령어가 직관적.
+  다양한 자료구조: 용도에 맞는 타입 선택 가능.
+
+단점:
+  데이터 유실 위험: 메모리 기반이라 서버 재시작 시 데이터 사라짐.
+                    (영속성 설정으로 완화 가능하지만 DB만큼 안전하지 않음)
+  메모리 비용:     RAM은 디스크보다 비쌈. 모든 데이터 캐싱 시 비용 증가.
+  일관성 관리:     DB 데이터가 바뀌면 캐시도 갱신해야 함.
+                    안 하면 오래된 데이터(stale data)가 반환됨.
+
+DB vs Redis:
+  DB    → 영구 보존이 필요한 데이터 (유저 정보, 주문 내역)
+  Redis → 빠른 접근이 필요하거나 임시 데이터 (캐시, 토큰, 세션)
+  실무에서는 둘을 함께 사용. DB가 원본, Redis가 복사본(캐시).
+
+---
+
+-- app/core/redis.py --
+
+  from redis.asyncio import Redis
+
+  redis_client: Redis = Redis(
+      host=settings.redis_host,
+      port=settings.redis_port,
+      decode_responses=True,
+  )
+
+database.py의 create_async_engine과 동일한 역할.
+앱 시작 시 한 번 생성, 전체에서 공유 (싱글턴).
+
+decode_responses=True:
+  Redis는 기본적으로 bytes를 반환.
+  True로 설정하면 자동으로 str로 변환해줌.
+
+---
+
+-- Refresh Token DB → Redis 이전 --
+
+Redis 저장 구조:
+  key:   "rt:1_drfiIFqfKSz..."  (prefix + token)
+  value: "1"                     (user_id)
+  TTL:   604800초 (7일)          → 자동 만료
+
+DB 방식 vs Redis 방식 비교:
+  만료 처리:   DB = expires_at 컬럼 직접 비교 / Redis = TTL 자동 처리
+  무효화:      DB = is_revoked = True UPDATE  / Redis = key 삭제
+  유효성 확인: DB = SELECT + 조건 검사        / Redis = GET (없으면 None)
+  속도:        DB = 느림                      / Redis = 매우 빠름
+
+REFRESH_TOKEN_PREFIX = "rt:" 를 쓰는 이유:
+  Redis는 모든 데이터가 하나의 공간에 저장됨.
+  캐시 key, 세션 key 등과 섞이지 않도록 prefix로 네임스페이스 구분.
+  실무에서 key 네이밍: "rt:{token}", "cache:items", "session:{id}" 형태.
+
+app/repositories/refresh_token.py 변경:
+  save:   redis_client.set(key, user_id, ex=expire_seconds)
+          ex = TTL(초). 설정하면 만료 시 Redis가 자동으로 key 삭제.
+  get:    redis_client.get(key) → str(user_id) 또는 None
+          None이면 만료됐거나 revoke된 것. 두 경우를 하나로 처리.
+  revoke: redis_client.delete(key) → key 삭제 = 무효화
+
+auth.py 변경 사항:
+  login:   expires_at 대신 expire_seconds(초) 전달. db 파라미터 불필요.
+           86400 = 하루(초). jwt_refresh_expire_days * 86400 = TTL.
+  refresh: DB 객체 조회 대신 get_user_id_by_refresh_token으로 user_id만 받음.
+           is_revoked, expires_at 검사 없이 None 여부만 확인.
+  logout:  db: AsyncSession = Depends(get_db) 파라미터 완전히 제거.
+           Redis 작업은 DB 세션이 불필요.
+
+---
+
 [Unit 2 보완 - CRUD 완성 (Update + Delete)]
 
 -- 변경 파일 요약 --
