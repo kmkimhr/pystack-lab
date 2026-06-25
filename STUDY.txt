@@ -152,6 +152,150 @@ Q. 세션 전달은 Depends, 세션 닫기는 async with 인가?
 
 ---
 
+Q. 비동기 함수를 사용할 때 await를 꼭 붙여야 하나?
+  네. async def 함수는 호출해도 즉시 실행되지 않고 코루틴 객체를 반환.
+  await를 붙여야 실제로 실행됨.
+
+    result = item_repo.get_items(db)        # 코루틴 객체 반환 (실행 안 됨)
+    result = await item_repo.get_items(db)  # 실제 실행, 결과 반환
+
+  await는 async def 함수 안에서만 사용 가능.
+    def get_item():
+        result = await ...  # SyntaxError
+    async def get_item():
+        result = await ...  # 정상
+
+  정리: async def 호출 시 항상 await, await는 항상 async def 안에서만.
+
+  await의 정확한 의미: "이 작업이 끝날 때까지 기다려라"
+  단, 블로킹이 아닌 논블로킹으로 기다림.
+    블로킹:    DB 쿼리 대기 중 → 다른 요청 처리 불가 (CPU가 멈춰서 기다림)
+    논블로킹:  DB 쿼리 대기 중 → 잠깐 자리 비움 → 다른 요청 처리
+               → DB 완료 → 돌아와서 계속
+  await = "나는 기다릴 테니 그동안 다른 일 해도 돼"라고 이벤트 루프에 알리는 것.
+
+Q. JS처럼 await 없이 호출하고 넘어가는 게 Python에서도 가능한가?
+  가능. asyncio.create_task() 사용.
+
+    # await → 끝날 때까지 기다림
+    result = await item_repo.get_items(db)
+
+    # create_task → 실행만 시키고 바로 넘어감
+    task = asyncio.create_task(item_repo.get_items(db))
+    result = await task  # 나중에 결과가 필요할 때
+
+  JS와의 차이:
+    JS: 함수 호출만 해도 Promise가 즉시 실행 시작됨
+    Python: await나 create_task 없이 호출하면 코루틴 객체만 반환, 실행 안 됨
+
+---
+
+-- app/schemas/item.py 수정 --
+
+ORM 객체를 Pydantic 스키마로 변환하려면 from_attributes=True 필요.
+
+  class ItemResponse(BaseModel):
+      model_config = ConfigDict(from_attributes=True)
+      ...
+
+ConfigDict:
+  Pydantic 모델의 동작 방식을 설정하는 객체.
+
+  from_attributes=True:
+    Pydantic이 dict 외에 ORM 객체의 속성도 읽을 수 있게 허용.
+    FastAPI가 response_model 처리 시 내부적으로 model_validate() 호출.
+    ORM 객체를 반환할 때 이 옵션 없으면 에러.
+
+    from_attributes=False (기본값): dict만 읽음
+    from_attributes=True:          ORM 객체 속성도 읽음
+
+  기타 옵션 (참고):
+    str_strip_whitespace=True  문자열 앞뒤 공백 자동 제거
+    frozen=True                인스턴스 생성 후 값 변경 불가
+
+---
+
+-- app/api/v1/items.py 변경 (fake_db → 실제 DB) --
+
+변경 사항 3가지:
+
+1. fake_db → 실제 DB 세션
+   이전: db: list = Depends(get_fake_db)
+   이후: db: AsyncSession = Depends(get_db)
+   메모리 리스트 대신 실제 PostgreSQL 세션 주입.
+
+2. 비즈니스 로직 → repository로 위임
+   이전: 엔드포인트가 직접 id 부여, 리스트에 append
+   이후: item_repo.create_item(db, ...) 호출
+   엔드포인트는 "무엇을 할지"만 선언, DB 작업은 repository 담당.
+
+3. 동기 → 비동기
+   이전: def create_item(...)
+   이후: async def create_item(...)
+   실제 DB 쿼리는 I/O 작업이라 async/await 필요.
+
+---
+
+-- app/repositories/item.py (DB 쿼리 레이어) --
+DB 쿼리를 담당하는 함수 모음. 엔드포인트에서 직접 쿼리 대신 이 함수들을 호출.
+
+주요 함수 설명:
+  select(Item)
+    SELECT * FROM items 와 동일. SQLAlchemy에서 SQL을 Python으로 표현.
+
+  result.scalars().all()
+    쿼리 결과에서 Item 객체 목록을 꺼냄.
+    scalars()  튜플이 아닌 Item 객체로 변환
+    .all()     전체 목록 반환 / .first() 첫 번째 하나만 반환
+
+  select(Item).where(Item.id == item_id)
+    SELECT * FROM items WHERE id = ? 와 동일.
+
+  db.add(item)
+    "이 객체를 다음 커밋 때 INSERT해줘"라고 세션 대기열에 예약.
+    아직 DB에 저장 안 됨, 메모리에만 있는 상태.
+
+  await db.commit()
+    세션 대기열의 변경사항을 실제 DB에 실행 (INSERT/UPDATE/DELETE).
+
+  await db.refresh(item)
+    커밋 후 DB에서 최신 데이터를 다시 읽어옴.
+    id처럼 DB가 자동 생성한 값을 item 객체에 반영하기 위해 필요.
+
+Q. db.add의 의미?
+  세션은 작업 대기열. add는 예약, commit은 실제 실행.
+
+    item = Item(name="사과", price=1000)  # 메모리에만 존재
+    db.add(item)                          # INSERT 예약
+    await db.commit()                     # 실제 DB에 저장
+
+  add만 하고 commit 안 하면 DB에 아무것도 저장되지 않음.
+
+  분리하는 이유 = 트랜잭션:
+    db.add(item1)
+    db.add(item2)
+    await db.commit()  # 둘 다 한 번에 저장
+    중간에 에러 나면 둘 다 취소 → 일부만 저장되는 상황 방지.
+
+Q. db.add는 INSERT를 의미하나?
+  정확히는 "변경사항 추적 등록". 상황에 따라 동작이 달라짐.
+
+  새 객체에 add → 커밋 시 INSERT:
+    item = Item(name="사과")
+    db.add(item)
+    await db.commit()  # INSERT INTO items ...
+
+  세션에서 가져온 기존 객체 수정 → 커밋 시 UPDATE (add 불필요):
+    item = await db.get(Item, 1)  # 세션이 이미 추적 중
+    item.name = "배"
+    await db.commit()  # UPDATE items SET name='배' WHERE id=1
+
+  db.delete(객체) → 커밋 시 DELETE
+
+  세션에서 가져온 객체는 자동으로 변경 감지(추적) → add 없이도 commit 시 반영.
+
+---
+
 -- app/models/item.py (ORM 모델) --
 DB 테이블을 Python 클래스로 표현한 것. SQLAlchemy 2.0+ 문법.
 
