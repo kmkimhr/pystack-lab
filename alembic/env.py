@@ -7,20 +7,16 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+from app.core.database import Base, DATABASE_URL   # 추가
+
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
+config.set_main_option("sqlalchemy.url", DATABASE_URL)   # 추가
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+target_metadata = Base.metadata   # None → Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
