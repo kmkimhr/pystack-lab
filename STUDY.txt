@@ -162,7 +162,7 @@ Q. decode에서 except를 Exception으로 넓게 잡는 게 맞나?
 
 ---
 
-[Unit 3 - CRUD 완성 (Update + Delete)]
+[Unit 2 보완 - CRUD 완성 (Update + Delete)]
 
 -- 변경 파일 요약 --
   app/schemas/item.py       ItemUpdate 스키마 추가
