@@ -367,6 +367,48 @@ decode_responses=True:
 
 ---
 
+-- TTL과 키 네이밍 전략 --
+
+TTL (Time To Live):
+  Redis key에 설정하는 만료 시간(초).
+  TTL이 지나면 Redis가 자동으로 key를 삭제.
+  별도 만료 처리 코드 불필요.
+
+  redis_client.set(key, value, ex=60)   # 60초 후 자동 삭제
+  redis_client.set(key, value, ex=604800)  # 7일 후 자동 삭제
+
+TTL 설정 기준:
+  refresh_token: jwt_refresh_expire_days * 86400 (만료일과 동일하게)
+  API 캐시:      60초 (데이터 변경 빈도에 따라 조정)
+  너무 짧으면:   캐시 효과 없음 (매번 DB 조회)
+  너무 길면:     오래된 데이터가 반환될 위험
+
+키 네이밍 전략:
+  Redis는 모든 데이터가 하나의 공간에 저장됨.
+  prefix로 네임스페이스를 구분해서 충돌 방지 및 관리 용이성 확보.
+
+  패턴: "타입:식별자"
+    rt:{token}          refresh token
+    cache:items         아이템 목록 캐시
+    cache:item:{id}     단건 아이템 캐시
+    session:{user_id}   유저 세션
+
+  상수로 관리:
+    REFRESH_TOKEN_PREFIX = "rt:"
+    ITEMS_CACHE_KEY = "cache:items"
+    → 문자열 직접 쓰지 않고 상수로 관리해야 오타 방지
+
+캐시 무효화 (Cache Invalidation):
+  데이터 변경(생성/수정/삭제) 시 관련 캐시를 삭제하는 것.
+  삭제하지 않으면 오래된 데이터(stale data)가 반환됨.
+  다음 조회 요청 시 DB에서 새로 읽어 캐시를 다시 채움.
+
+  create_item → delete_cache("cache:items")
+  update_item → delete_cache("cache:items")
+  delete_item → delete_cache("cache:items")
+
+---
+
 -- Refresh Token DB → Redis 이전 --
 
 Redis 저장 구조:
