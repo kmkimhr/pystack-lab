@@ -3,6 +3,126 @@ pystack-lab 학습 노트
 
 ======================
 
+[Unit 3 - CRUD 완성 (Update + Delete)]
+
+-- 변경 파일 요약 --
+  app/schemas/item.py       ItemUpdate 스키마 추가
+  app/repositories/item.py  update_item, delete_item 함수 추가
+  app/api/v1/items.py       PUT, DELETE 엔드포인트 추가 / POST status_code 201로 수정
+
+---
+
+-- app/schemas/item.py — ItemUpdate 스키마 --
+
+  class ItemUpdate(BaseModel):
+      name: str | None = None
+      price: float | None = None
+      is_available: bool | None = None
+
+모든 필드를 Optional(| None = None)로 선언하는 이유:
+  PUT 요청에서 일부 필드만 보내도 나머지는 기존 값 유지.
+  실무에서는 PUT/PATCH 구분 없이 이 패턴을 가장 많이 씀.
+
+PUT vs PATCH (HTTP 표준 정의):
+  PUT   전체 교체. 보내지 않은 필드는 null/기본값으로 덮어씀.
+  PATCH 부분 수정. 보낸 필드만 업데이트.
+
+실무 관행:
+  소규모 API는 PUT에 Optional 필드 패턴을 써서 PATCH처럼 동작시키는 경우가 많음.
+  엄격하게 표준을 따르려면 PATCH 엔드포인트를 별도로 만들면 됨.
+
+---
+
+-- app/repositories/item.py — update_item / delete_item --
+
+  async def update_item(db: AsyncSession, item_id: int, data: dict) -> Item | None:
+      result = await db.execute(select(Item).where(Item.id == item_id))
+      item = result.scalars().first()
+      if not item:
+          return None
+      for key, value in data.items():
+          setattr(item, key, value)
+      await db.commit()
+      await db.refresh(item)
+      return item
+
+  async def delete_item(db: AsyncSession, item_id: int) -> bool:
+      result = await db.execute(select(Item).where(Item.id == item_id))
+      item = result.scalars().first()
+      if not item:
+          return False
+      await db.delete(item)
+      await db.commit()
+      return True
+
+핵심 패턴:
+
+setattr(item, key, value):
+  Python 내장 함수. 런타임에 객체 속성을 동적으로 세팅.
+  setattr(item, "name", "배") == item.name = "배"
+  update_item에 data dict를 루프 돌며 쓰는 이유:
+    어떤 필드가 올지 모를 때, 일일이 if문 쓰지 않고 한 번에 처리.
+
+update_item에서 db.add() 없는 이유:
+  DB에서 select로 조회한 객체는 세션이 자동으로 추적 중(dirty tracking).
+  setattr로 값만 바꾸면 commit() 시 SQLAlchemy가 UPDATE를 자동으로 실행.
+  새 객체를 만들 때만 db.add() 필요.
+
+db.delete(item) → await db.commit():
+  delete는 예약, commit은 실제 실행. create와 동일한 2단계 패턴.
+
+반환 타입을 bool로 쓰는 이유:
+  삭제 성공/실패 여부만 엔드포인트에 알려주면 충분.
+  삭제된 객체 데이터를 반환할 필요가 없음.
+
+---
+
+-- app/api/v1/items.py — PUT / DELETE 엔드포인트 --
+
+  @router.put("/items/{item_id}", response_model=ItemResponse)
+  async def update_item(item_id: int, item: ItemUpdate, db: AsyncSession = Depends(get_db)):
+      updated = await item_repo.update_item(db, item_id, item.model_dump(exclude_none=True))
+      if not updated:
+          raise HTTPException(status_code=404, detail="아이템을 찾을 수 없습니다")
+      return updated
+
+  @router.delete("/items/{item_id}", status_code=204)
+  async def delete_item(item_id: int, db: AsyncSession = Depends(get_db)):
+      deleted = await item_repo.delete_item(db, item_id)
+      if not deleted:
+          raise HTTPException(status_code=404, detail="아이템을 찾을 수 없습니다")
+
+model_dump(exclude_none=True):
+  None인 필드를 dict에서 제외하고 반환.
+  {"name": "배", "price": None, "is_available": None}
+    → {"name": "배"}
+  이걸 repo에 넘기면 "배"만 UPDATE, 나머지는 기존 값 유지.
+  exclude_none 없이 넘기면 None이 그대로 DB에 써져 데이터 손실.
+
+DELETE의 status_code=204 (No Content):
+  HTTP 표준: 삭제 성공 시 응답 body 없음.
+  response_model을 지정하지 않는 이유도 동일 (반환할 데이터 없음).
+  함수에 return문이 없어도 FastAPI가 204를 자동으로 반환.
+
+POST의 status_code=201 (Created):
+  기존 코드는 200이었으나 HTTP 표준은 생성 성공 시 201.
+  GET/PUT은 200(기본값), POST(생성)는 201, DELETE는 204.
+
+---
+
+Q. update_item에서 item not found를 repo가 None 반환으로 알리는 게 최선인가?
+  소규모 API에서는 충분하고 간단한 패턴.
+  대규모 실무에서는 커스텀 예외를 정의해서 repo에서 직접 raise하기도 함:
+    raise ItemNotFoundError(item_id)
+  현재 코드처럼 None 반환 후 엔드포인트에서 처리하는 방식도 표준적인 패턴.
+
+Q. delete_item이 bool을 반환하는데, 실패 시 exception을 repo에서 raise하면 안 되나?
+  가능. 하지만 repo는 DB 작업만 담당하고,
+  HTTP 에러(404, 500 등) 변환은 엔드포인트(컨트롤러)에서 하는 게 계층 분리 원칙.
+  repo가 HTTPException을 raise하면 repo가 HTTP를 알게 되는 것 → 계층 오염.
+
+---
+
 [Unit 2 - 데이터베이스 (PostgreSQL + SQLAlchemy async + Alembic)]
 
 설치:

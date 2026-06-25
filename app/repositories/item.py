@@ -20,3 +20,25 @@ async def create_item(db: AsyncSession, name: str, price: float, is_available: b
     await db.commit()
     await db.refresh(item)
     return item
+
+
+async def update_item(db: AsyncSession, item_id: int, data: dict) -> Item | None:
+    result = await db.execute(select(Item).where(Item.id == item_id))
+    item = result.scalars().first()
+    if not item:
+        return None
+    for key, value in data.items():
+        setattr(item, key, value)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+async def delete_item(db: AsyncSession, item_id: int) -> bool:
+    result = await db.execute(select(Item).where(Item.id == item_id))
+    item = result.scalars().first()
+    if not item:
+        return False
+    await db.delete(item)
+    await db.commit()
+    return True
