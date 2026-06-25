@@ -15,5 +15,35 @@ services:
     ports:
       - "${REDIS_PORT}:6379"
 
+  celery_worker: 
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: >
+      sh -c "pip install uv && uv run celery -A app.worker worker --loglevel=info"
+    environment:
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+  
+  flower:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: >
+      sh -c "pip install uv && uv run celery -A app.worker flower --port=5555"
+    ports:
+      - "5555:5555"
+    environment:
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
 volumes:
   postgres_data:
