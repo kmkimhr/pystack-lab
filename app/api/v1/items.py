@@ -27,8 +27,12 @@ async def get_item(item_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/items/{item_id}", response_model=ItemResponse)
-async def update_item(item_id: int, item: ItemUpdate, db: AsyncSession = Depends(get_db)):
-    updated = await item_repo.update_item(db, item_id, item.model_dump(exclude_none=True))
+async def update_item(
+    item_id: int, item: ItemUpdate, db: AsyncSession = Depends(get_db)
+):
+    updated = await item_repo.update_item(
+        db, item_id, item.model_dump(exclude_none=True)
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="아이템을 찾을 수 없습니다")
     return updated

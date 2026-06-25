@@ -6,18 +6,17 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-
-from app.core.database import Base, DATABASE_URL
-from app.models import item, user  # noqa: F401
+from app.core.database import DATABASE_URL, Base
+from app.models import item, refresh_token, user  # noqa: F401
 
 config = context.config
 
-config.set_main_option("sqlalchemy.url", DATABASE_URL)   # 추가
+config.set_main_option("sqlalchemy.url", DATABASE_URL)  # 추가
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata   # None → Base.metadata
+target_metadata = Base.metadata  # None → Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

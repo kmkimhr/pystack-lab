@@ -5,6 +5,110 @@ pystack-lab 학습 노트
 
 [Unit 4 - 인증 (JWT)]
 
+-- 멀티 디바이스 토큰 관리 --
+
+로그인할 때마다 새 토큰 쌍이 발급됨:
+  아이폰 로그인  → access_token A + refresh_token A
+  맥북 로그인   → access_token B + refresh_token B
+  갤럭시 로그인 → access_token C + refresh_token C
+
+refresh_tokens 테이블 (DB):
+  id | token      | user_id | is_revoked
+  1  | "token_A"  | 1       | false
+  2  | "token_B"  | 1       | false
+  3  | "token_C"  | 1       | false
+  같은 user_id지만 기기마다 row가 별도로 존재.
+
+access_token vs refresh_token 추적 가능 여부:
+  access_token:  기기마다 값이 다르지만 DB에 저장하지 않음.
+                 서버는 몇 개가 돌아다니는지, 어느 기기 것인지 모름.
+                 서명이 유효하면 그냥 통과. → stateless
+  refresh_token: 기기마다 값이 다르고 DB에 저장.
+                 서버가 유효한 토큰 목록을 직접 관리 가능. → stateful
+
+로그아웃 방식에 따른 차이:
+  refresh_token으로 로그아웃: 해당 토큰(기기) 하나만 revoke → 특정 기기만 로그아웃
+  access_token으로 로그아웃:  user_id 추출 후 전체 refresh_token revoke → 모든 기기 로그아웃
+
+access_token을 DB에 저장하지 않는 이유:
+  저장하면 매 API 요청마다 DB 조회가 필요해짐.
+  JWT의 핵심 장점인 stateless(서명만으로 빠른 검증)가 사라짐.
+  결국 세션 방식과 다를 게 없어짐.
+
+토큰을 관리하는 테이블: refresh_tokens 하나뿐.
+access_token은 테이블 없음. 서버는 서명 검증만 함.
+
+---
+
+-- Refresh Token --
+
+왜 필요한가?
+
+  액세스 토큰만 있으면 딜레마가 생긴다:
+    짧게 설정 (15분) → 보안 좋음. 하지만 15분마다 로그아웃되어 UX 최악.
+    길게 설정 (30일) → UX 좋음. 하지만 탈취당하면 30일 내내 악용 가능.
+
+  해결책: 역할이 다른 두 토큰을 분리한다.
+
+두 토큰의 역할 분리:
+
+  액세스 토큰 (Access Token):
+    수명: 짧음 (15분 ~ 1시간)
+    용도: 실제 API 요청 인증. 매 요청마다 헤더에 포함.
+    저장: DB에 저장하지 않음 (stateless). 서버가 서명만 검증.
+    탈취 피해: 최대 1시간. 만료되면 자동 소멸.
+
+  리프레시 토큰 (Refresh Token):
+    수명: 김 (7일 ~ 30일)
+    용도: 액세스 토큰 재발급 전용. 재발급 요청 시에만 사용.
+    저장: DB에 저장. 서버가 유효성을 직접 관리.
+    탈취 피해: 서버에서 즉시 revoke(무효화) 가능.
+
+전체 인증 흐름:
+
+  1. 로그인
+     POST /auth/login → access_token + refresh_token 동시 발급
+     refresh_token은 DB의 refresh_tokens 테이블에 저장
+
+  2. API 요청 (액세스 토큰 사용)
+     Authorization: Bearer <access_token>
+     서버는 DB 조회 없이 서명만 검증
+
+  3. 액세스 토큰 만료
+     POST /auth/refresh (refresh_token 전송)
+     → DB에서 refresh_token 유효성 확인
+     → 기존 refresh_token 즉시 revoke
+     → 새 access_token + 새 refresh_token 발급 (토큰 로테이션)
+
+  4. 로그아웃
+     POST /auth/logout (refresh_token 전송)
+     → DB에서 is_revoked = True 로 변경
+     → 이후 해당 refresh_token으로 재발급 불가
+
+토큰 로테이션 (Token Rotation):
+  /refresh 호출 시 기존 refresh_token을 revoke하고 새 것을 발급.
+  이유: refresh_token이 탈취됐을 때 한 번 사용되면 무효화되므로
+        원래 사용자가 다음 재발급 시도 시 실패 → 탈취 감지 가능.
+
+DB에 저장하는 이유:
+  액세스 토큰은 stateless (DB 불필요). 서명으로만 검증.
+  리프레시 토큰은 서버가 직접 무효화해야 하므로 DB 저장 필수.
+  DB에 없거나 is_revoked=True이면 즉시 거부.
+
+우리 코드의 refresh_tokens 테이블:
+  token       실제 토큰 값 (secrets.token_urlsafe(32)로 생성된 랜덤 문자열)
+  user_id     어느 유저의 토큰인지 (FK → users.id)
+  expires_at  만료 시각
+  is_revoked  로그아웃/로테이션 시 True로 변경
+
+액세스 토큰 vs 리프레시 토큰 생성 방식 차이:
+  액세스 토큰: JWT 형식. payload에 email, exp를 담아 서명.
+               DB 조회 없이 서명만으로 검증 가능 (stateless).
+  리프레시 토큰: 랜덤 문자열 (secrets.token_urlsafe).
+                JWT일 필요 없음. 어차피 DB에서 조회해서 검증하기 때문.
+
+---
+
 -- OAuth2 vs JWT --
 
 OAuth2: 인증 흐름(프로토콜). "토큰을 어떻게 발급받고 전달할 것인가"를 정의.
