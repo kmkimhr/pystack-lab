@@ -3,6 +3,110 @@ pystack-lab 학습 노트
 
 ======================
 
+[Unit 4 - 인증 (JWT)]
+
+-- JWT란? --
+
+JWT (JSON Web Token): 서버가 "이 사람은 로그인한 사용자다"를 증명하는 토큰.
+문자열 형태이며 세 부분이 점(.)으로 구분됨:
+
+  eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyQGV4YW1wbGUuY29tIn0.abc123
+  ─────────────────── ────────────────────────────────────── ──────
+       Header                       Payload                  Signature
+
+  Header:    알고리즘 정보 (예: HS256)
+  Payload:   담긴 데이터 (예: {"sub": "user@example.com", "exp": 1700000000})
+  Signature: Header + Payload를 서버의 비밀키로 서명한 값
+
+JWT 동작 흐름:
+  1. 클라이언트가 이메일/비밀번호로 POST /auth/login 요청
+  2. 서버가 검증 후 JWT 토큰 발급 → 클라이언트에 응답
+  3. 클라이언트가 이후 요청마다 헤더에 토큰 포함
+     Authorization: Bearer eyJhbGci...
+  4. 서버가 토큰을 검증해서 누구의 요청인지 확인
+
+세션 방식 vs JWT 방식:
+  세션: 서버가 로그인 상태를 DB/메모리에 저장. 서버 부담.
+  JWT:  서버가 상태를 저장하지 않음 (stateless). 토큰 자체에 정보가 있음.
+        토큰이 유효하면 DB 조회 없이도 사용자 식별 가능.
+
+JWT의 sub (subject):
+  토큰이 "누구에 관한 것인지"를 담는 표준 필드.
+  보통 user_id 또는 email을 넣음.
+  payload = {"sub": "user@example.com", "exp": ...}
+
+JWT의 exp (expiration):
+  토큰 만료 시각 (Unix timestamp). 만료된 토큰은 자동으로 거부됨.
+  짧게 설정할수록 보안에 유리 (탈취당해도 금방 만료).
+  일반적으로 액세스 토큰 15분~1시간, 리프레시 토큰 수일~수주.
+
+HS256 알고리즘:
+  HMAC-SHA256. 하나의 비밀키로 서명하고 검증하는 대칭 방식.
+  서버만 비밀키를 알고 있으므로, 서명된 토큰은 서버가 만든 것이 보장됨.
+  비밀키가 유출되면 누구나 유효한 토큰을 만들 수 있으니 관리 필수.
+
+---
+
+-- app/core/security.py 코드 설명 --
+
+  pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+CryptContext (passlib):
+  비밀번호 해싱 방법을 설정하는 객체.
+  schemes=["bcrypt"]  bcrypt 알고리즘 사용.
+  deprecated="auto"   구버전 해시를 자동으로 업그레이드 처리.
+
+bcrypt:
+  비밀번호를 단방향 해싱하는 알고리즘. 복호화 불가.
+  같은 비밀번호라도 해시할 때마다 다른 값이 나옴 (salt 자동 포함).
+  "1234" → "$2b$12$abc..." (매번 다름)
+  DB가 유출돼도 원본 비밀번호를 알 수 없음.
+
+  hash_password("1234")         → "$2b$12$abc..."  (저장)
+  verify_password("1234", hash) → True              (검증)
+
+왜 비밀번호를 해싱하나?
+  DB에 평문("1234")으로 저장하면 DB 유출 시 비밀번호 즉시 노출.
+  해시값만 저장하면 유출돼도 원본 비밀번호 복원 불가.
+  verify_password는 입력값을 같은 방식으로 해시해서 저장값과 비교.
+
+  create_access_token(subject: str) -> str:
+      expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+      payload = {"sub": subject, "exp": expire}
+      return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+create_access_token:
+  subject: 토큰에 담을 식별자. 보통 email 또는 str(user_id).
+  expire:  현재 UTC 시각 + 만료 시간.
+           timezone.utc를 쓰는 이유: 서버 시간대와 무관하게 동일한 기준으로 계산.
+  jwt.encode: payload를 비밀키로 서명해서 JWT 문자열 반환.
+
+  decode_access_token(token: str) -> str | None:
+      try:
+          payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+          return payload.get("sub")
+      except Exception:
+          return None
+
+decode_access_token:
+  jwt.decode: 토큰을 검증하고 payload를 반환.
+              서명 불일치, 만료, 형식 오류 시 예외 발생.
+  except Exception → None: 검증 실패 시 None 반환.
+    호출부(deps.py)에서 None이면 401 Unauthorized.
+  payload.get("sub"): 토큰에 담긴 식별자(email 등) 반환.
+
+Q. algorithms가 리스트인 이유?
+  jwt.decode는 여러 알고리즘을 허용 목록으로 받음.
+  하나만 쓰더라도 리스트로 전달해야 함. 라이브러리 API 설계.
+
+Q. decode에서 except를 Exception으로 넓게 잡는 게 맞나?
+  jose 라이브러리가 만료/서명오류/형식오류마다 다른 예외를 던짐.
+  이 함수의 목적은 "유효한 토큰인가"를 bool처럼 판단하는 것이라
+  어떤 이유든 실패하면 None으로 통일하는 게 실용적.
+  세분화가 필요하면 JWTError, ExpiredSignatureError 등으로 분기 가능.
+
+---
+
 [Unit 3 - CRUD 완성 (Update + Delete)]
 
 -- 변경 파일 요약 --

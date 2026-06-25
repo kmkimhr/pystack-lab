@@ -1,0 +1,34 @@
+from datetime import datetime, timedelta, timezone
+
+from jose import jwt
+from passlib.context import CryptContext
+
+from app.core.config import settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+# 회원가입 시 평문 비밀번호를 bcrypt 해시로 변환 → DB에 저장
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+# 로그인 시 입력된 평문과 DB의 해시값 비교 → True/False 반환
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+
+# 로그인 성공 후 subject(email 등)를 담은 JWT 액세스 토큰 발급
+def create_access_token(subject: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+    payload = {"sub": subject, "exp": expire}
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+# 요청마다 토큰 검증 후 subject 반환, 만료/서명오류 시 None 반환
+def decode_access_token(token: str) -> str | None:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        return payload.get("sub")
+    except Exception:
+        return None
